@@ -85,8 +85,7 @@ async def handle_getvpn(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "revoke")
 async def handle_revoke(callback: types.CallbackQuery):
     await callback.answer()
-    user_id = callback.from_user.id
-    client_name = f"tg_{user_id}"
+    tg_id = str(callback.from_user.id)
 
     try:
         conn = sqlite3.connect(XUI_DB_PATH)
@@ -100,7 +99,7 @@ async def handle_revoke(callback: types.CallbackQuery):
         inbound_id, settings_json = row
         settings = json.loads(settings_json)
         original_len = len(settings.get("clients", []))
-        settings["clients"] = [c for c in settings["clients"] if c.get("email") != client_name]
+        settings["clients"] = [c for c in settings["clients"] if c.get("tgId") != tg_id]
 
         if len(settings["clients"]) == original_len:
             await callback.message.answer("ℹ️ У тебя не было активного VPN-доступа.")
@@ -151,8 +150,8 @@ async def handle_possible_email(message: Message):
 
 # === Генерация VPN-доступа ===
 async def generate_vpn(message: Message, email: str = ""):
-    user_id = message.from_user.id
-    client_name = f"tg_{user_id}"
+    tg_id = str(message.from_user.id)
+    client_tag = f"tg_{tg_id}"
 
     try:
         conn = sqlite3.connect(XUI_DB_PATH)
@@ -167,7 +166,7 @@ async def generate_vpn(message: Message, email: str = ""):
         settings = json.loads(settings_json)
         clients = settings.get("clients", [])
 
-        existing = next((c for c in clients if c.get("email") == client_name), None)
+        existing = next((c for c in clients if c.get("tgId") == tg_id), None)
 
         if existing:
             uuid = existing["id"]
@@ -183,7 +182,7 @@ async def generate_vpn(message: Message, email: str = ""):
                 "reset": 0,
                 "totalGB": 0,
                 "subId": "",
-                "tgId": str(user_id),
+                "tgId": tg_id,
                 "flow": "",
                 "comment": ""
             }
@@ -196,7 +195,7 @@ async def generate_vpn(message: Message, email: str = ""):
             subprocess.run(["x-ui", "restart"])
 
         # Сборка ссылки
-        config_url = f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_name}"
+        config_url = f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_tag}"
         await message.answer(
             f"✅ Доступ предоставлен на <b>1 год</b>.\n\n"
             f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
