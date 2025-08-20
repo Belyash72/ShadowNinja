@@ -173,7 +173,7 @@ async def generate_vpn(message: Message, email: str = ""):
             uuid = existing["id"]
         else:
             uuid = str(uuid4())
-            expiry = int((time.time() + 7 * 24 * 60 * 60) * 1000)  # 7 дней
+            expiry = int((time.time() + 365 * 24 * 60 * 60) * 1000)  # 1 год
             new_client = {
                 "id": uuid,
                 "email": email,
@@ -198,10 +198,9 @@ async def generate_vpn(message: Message, email: str = ""):
         # Сборка ссылки
         config_url = f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_name}"
         await message.answer(
-            f"✅ Доступ предоставлен на <b>7 дней</b>.\n\n"
+            f"✅ Доступ предоставлен на <b>1 год</b>.\n\n"
             f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
-            f"<code>{config_url}</code>",
-            reply_markup=main_menu()
+            f"<code>{config_url}</code>"
         )
 
         qr = generate_qr_code(config_url)
