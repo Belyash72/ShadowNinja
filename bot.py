@@ -1,7 +1,8 @@
 import os
 import time
-import sqlite3
 import json
+import asyncio
+import aiosqlite
 from uuid import uuid4
 from io import BytesIO
 
@@ -88,32 +89,32 @@ async def handle_revoke(callback: types.CallbackQuery):
     tg_id = str(callback.from_user.id)
 
     try:
-        conn = sqlite3.connect(XUI_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, settings FROM inbounds LIMIT 1")
-        row = cursor.fetchone()
-        if not row:
-            await callback.message.answer("❌ Не найден инбаунд в базе x-ui.")
-            return
+        async with aiosqlite.connect(XUI_DB_PATH) as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT id, settings FROM inbounds LIMIT 1")
+                row = await cursor.fetchone()
+                if not row:
+                    await callback.message.answer("❌ Не найден инбаунд в базе x-ui.")
+                    return
 
-        inbound_id, settings_json = row
-        settings = json.loads(settings_json)
-        original_len = len(settings.get("clients", []))
-        settings["clients"] = [c for c in settings["clients"] if c.get("tgId") != tg_id]
+                inbound_id, settings_json = row
+                settings = json.loads(settings_json)
+                original_len = len(settings.get("clients", []))
+                settings["clients"] = [c for c in settings["clients"] if c.get("tgId") != tg_id]
 
-        if len(settings["clients"]) == original_len:
-            await callback.message.answer("ℹ️ У тебя не было активного VPN-доступа.")
-            return
+                if len(settings["clients"]) == original_len:
+                    await callback.message.answer("ℹ️ У тебя не было активного VPN-доступа.")
+                    return
 
-        cursor.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(settings), inbound_id))
-        conn.commit()
-        await callback.message.answer("✅ Твой VPN-доступ был отозван.")
+                await cursor.execute(
+                    "UPDATE inbounds SET settings = ? WHERE id = ?",
+                    (json.dumps(settings), inbound_id),
+                )
+                await conn.commit()
+                await callback.message.answer("✅ Твой VPN-доступ был отозван.")
     except Exception as e:
         await callback.message.answer("❌ Ошибка при удалении клиента.")
         print(f"Ошибка при revoke: {e}")
-    finally:
-        if 'conn' in locals():
-            conn.close()
 
 
 # === КНОПКА: 📧 Указать почту ===
@@ -148,74 +149,78 @@ async def handle_possible_email(message: Message):
         email = message.text.strip()
         await generate_vpn(message, email=email)
 
+
 # === Генерация VPN-доступа ===
 async def generate_vpn(message: Message, email: str = ""):
     tg_id = str(message.from_user.id)
     client_tag = f"tg_{tg_id}"
 
     try:
-        conn = sqlite3.connect(XUI_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, settings FROM inbounds LIMIT 1")
-        row = cursor.fetchone()
-        if not row:
-            await message.answer("❌ Не удалось найти инбаунд в базе x-ui.")
-            return
+        async with aiosqlite.connect(XUI_DB_PATH) as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT id, settings FROM inbounds LIMIT 1")
+                row = await cursor.fetchone()
+                if not row:
+                    await message.answer("❌ Не удалось найти инбаунд в базе x-ui.")
+                    return
 
-        inbound_id, settings_json = row
-        settings = json.loads(settings_json)
-        clients = settings.get("clients", [])
+                inbound_id, settings_json = row
+                settings = json.loads(settings_json)
+                clients = settings.get("clients", [])
 
-        existing = next((c for c in clients if c.get("tgId") == tg_id), None)
+                existing = next((c for c in clients if c.get("tgId") == tg_id), None)
 
-        if existing:
-            uuid = existing["id"]
-        else:
-            uuid = str(uuid4())
-            expiry = int((time.time() + 365 * 24 * 60 * 60) * 1000)  # 1 год
-            new_client = {
-                "id": uuid,
-                "email": email,
-                "enable": True,
-                "expiryTime": expiry,
-                "limitIp": 0,
-                "reset": 0,
-                "totalGB": 0,
-                "subId": "",
-                "tgId": tg_id,
-                "flow": "",
-                "comment": ""
-            }
+                if existing:
+                    uuid = existing["id"]
+                else:
+                    uuid = str(uuid4())
+                    expiry = int((time.time() + 365 * 24 * 60 * 60) * 1000)  # 1 год
+                    new_client = {
+                        "id": uuid,
+                        "email": email,
+                        "enable": True,
+                        "expiryTime": expiry,
+                        "limitIp": 0,
+                        "reset": 0,
+                        "totalGB": 0,
+                        "subId": "",
+                        "tgId": tg_id,
+                        "flow": "",
+                        "comment": "",
+                    }
 
-            clients.append(new_client)
-            settings["clients"] = clients
-            cursor.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(settings), inbound_id))
-            conn.commit()
-            # Перезапускаем x-ui (чтобы xray подхватил нового пользователя)
-            subprocess.run(["x-ui", "restart"])
+                    clients.append(new_client)
+                    settings["clients"] = clients
+                    await cursor.execute(
+                        "UPDATE inbounds SET settings = ? WHERE id = ?",
+                        (json.dumps(settings), inbound_id),
+                    )
+                    await conn.commit()
+                    # Перезапускаем x-ui (чтобы xray подхватил нового пользователя)
+                    process = await asyncio.create_subprocess_exec("x-ui", "restart")
+                    await process.wait()
 
-        # Сборка ссылки
-        config_url = f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_tag}"
-        await message.answer(
-            f"✅ Доступ предоставлен на <b>1 год</b>.\n\n"
-            f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
-            f"<code>{config_url}</code>"
-        )
+            # Сборка ссылки
+            config_url = (
+                f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}"
+                f"&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_tag}"
+            )
+            await message.answer(
+                f"✅ Доступ предоставлен на <b>1 год</b>.\n\n"
+                f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
+                f"<code>{config_url}</code>"
+            )
 
-        qr = generate_qr_code(config_url)
-        await message.answer_photo(
-            photo=BufferedInputFile(qr.read(), filename="vpn_qr.png"),
-            caption="📱 Отсканируй QR-код для подключения"
-        )
+            qr = generate_qr_code(config_url)
+            await message.answer_photo(
+                photo=BufferedInputFile(qr.read(), filename="vpn_qr.png"),
+                caption="📱 Отсканируй QR-код для подключения",
+            )
 
     except Exception as e:
         await message.answer("❌ Ошибка при работе с базой x-ui.")
         print(f"Ошибка: {e}")
-    finally:
-        if 'conn' in locals():
-            conn.close()
-
 # === ЗАПУСК ===
+
 if __name__ == '__main__':
-    import asyncio
     asyncio.run(dp.start_polling(bot))
