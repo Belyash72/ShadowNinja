@@ -200,7 +200,7 @@ async def generate_vpn(message: Message, email: str = ""):
         await message.answer(
             f"✅ Доступ предоставлен на <b>7 дней</b>.\n\n"
             f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
-            f"<code>{link}</code>",
+            f"<code>{config_url}</code>",
             reply_markup=main_menu()
         )
 
