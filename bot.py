@@ -2,6 +2,7 @@ import os
 import time
 import sqlite3
 import json
+import subprocess
 from uuid import uuid4
 from io import BytesIO
 
@@ -87,7 +88,6 @@ async def handle_revoke(callback: types.CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
     client_name = f"tg_{user_id}"
-
     try:
         conn = sqlite3.connect(XUI_DB_PATH)
         cursor = conn.cursor()
@@ -108,13 +108,19 @@ async def handle_revoke(callback: types.CallbackQuery):
 
         cursor.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(settings), inbound_id))
         conn.commit()
-        await callback.message.answer("✅ Твой VPN-доступ был отозван.")
+    except sqlite3.Error as e:
+        await callback.message.answer("❌ Проблема с базой данных x-ui.")
+        print(f"SQLite error in revoke: {e}")
+        return
     except Exception as e:
-        await callback.message.answer("❌ Ошибка при удалении клиента.")
-        print(f"Ошибка при revoke: {e}")
+        await callback.message.answer("❌ Произошла внутренняя ошибка.")
+        print(f"Unexpected error in revoke: {e}")
+        return
     finally:
         if 'conn' in locals():
             conn.close()
+
+    await callback.message.answer("✅ Твой VPN-доступ был отозван.")
 
 
 # === КНОПКА: 📧 Указать почту ===
@@ -185,37 +191,46 @@ async def generate_vpn(message: Message, email: str = ""):
                 "subId": "",
                 "tgId": str(user_id),
                 "flow": "",
-                "comment": ""
+                "comment": "",
             }
 
             clients.append(new_client)
             settings["clients"] = clients
             cursor.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (json.dumps(settings), inbound_id))
             conn.commit()
-            # Перезапускаем x-ui (чтобы xray подхватил нового пользователя)
-            subprocess.run(["x-ui", "restart"])
-
-        # Сборка ссылки
-        config_url = f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_name}"
-        await message.answer(
-            f"✅ Доступ предоставлен на <b>7 дней</b>.\n\n"
-            f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
-            f"<code>{link}</code>",
-            reply_markup=main_menu()
-        )
-
-        qr = generate_qr_code(config_url)
-        await message.answer_photo(
-            photo=BufferedInputFile(qr.read(), filename="vpn_qr.png"),
-            caption="📱 Отсканируй QR-код для подключения"
-        )
-
+    except sqlite3.Error as e:
+        await message.answer("❌ Проблема с базой данных x-ui.")
+        print(f"SQLite error in generate_vpn: {e}")
+        return
     except Exception as e:
-        await message.answer("❌ Ошибка при работе с базой x-ui.")
-        print(f"Ошибка: {e}")
+        await message.answer("❌ Произошла внутренняя ошибка.")
+        print(f"Unexpected error in generate_vpn: {e}")
+        return
     finally:
         if 'conn' in locals():
             conn.close()
+
+    if not existing:
+        # Перезапускаем x-ui (чтобы xray подхватил нового пользователя)
+        subprocess.run(["x-ui", "restart"])
+
+    # Сборка ссылки
+    config_url = (
+        f"vless://{uuid}@{VLESS_ADDRESS}:{VLESS_PORT}?type={VLESS_TRANSPORT}"
+        f"&path={VLESS_PATH}&security={VLESS_SECURITY}#{VLESS_TAG}-{client_name}"
+    )
+    await message.answer(
+        f"✅ Доступ предоставлен на <b>7 дней</b>.\n\n"
+        f"📲 Скопируй эту ссылку и вставь в приложение <b>Amnezia</b>:\n"
+        f"<code>{config_url}</code>",
+        reply_markup=main_menu(),
+    )
+
+    qr = generate_qr_code(config_url)
+    await message.answer_photo(
+        photo=BufferedInputFile(qr.read(), filename="vpn_qr.png"),
+        caption="📱 Отсканируй QR-код для подключения",
+    )
 
 # === ЗАПУСК ===
 if __name__ == '__main__':
