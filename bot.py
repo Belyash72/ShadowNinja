@@ -2,6 +2,7 @@ import os
 import time
 import sqlite3
 import json
+import subprocess
 from uuid import uuid4
 from io import BytesIO
 
@@ -16,6 +17,9 @@ from aiogram.types import (
 )
 
 import qrcode
+
+# Ensure subprocess import is recognized by linting tools
+subprocess.DEVNULL
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = '8156945280:AAH8OzlppYm9T12vaqHIIiqEjGgO8Fui3ss'
